@@ -53,8 +53,13 @@ def dzen_page(f, row):
     e, n = lint_dzen(str(f))
     slug, ph = m["slug"], row["foto"].split()
     (SITE / "img").mkdir(parents=True, exist_ok=True)
-    for i, p in enumerate(ph[:3]):
-        crop(p + ".jpg", SITE / f"img/dzen-{slug}-{i}.jpg", 4 / 3 if i == 0 else 16 / 9)
+    cov = ROOT / "gen/covers" / f"{row['id']}.png"
+    if cov.exists():
+        im = ImageOps.fit(Image.open(cov).convert("RGB"), (1200, 900)); im.save(SITE / f"img/dzen-{slug}-0.jpg", quality=86, optimize=True)
+    else:
+        e.append("нет сгенерированной обложки")
+    for i, p in enumerate(ph[:2], 1):
+        crop(p + ".jpg", SITE / f"img/dzen-{slug}-{i}.jpg", 16 / 9)
     parts, kit = [], []
     for b in blocks:
         if b.startswith("{img"):
@@ -67,7 +72,7 @@ def dzen_page(f, row):
             parts.append(f"<p>{inline(' '.join(b.split()))}</p>")
     warn = "" if not e else '<p class="note bad">Проверка: ' + "; ".join(map(html.escape, e)) + "</p>"
     page = head(m["title"] + " – Дзен") + f"""<p><a href="index.html">← Все материалы</a></p>{warn}
-<div class="kit"><div class="meta">{row['id']} · выход {m['date']} · {UNAME[row['stranica']]} · {n} слов · запрос: {html.escape(row['zapros'])}</div>
+<div class="kit"><div class="meta">{row['id']} · выход {m['date']} · {UNAME[row['stranica']]} · {n} слов · главный ключ: {html.escape(row['glavnyy'])}<br>хвосты: {html.escape(row['hvosty'])}</div>
 <div class="step"><span>1</span><button onclick="copyText('t',this)">Скопировать заголовок</button></div>
 <div class="step"><span>2</span><a class="btn" href="img/dzen-{slug}-0.jpg" download>Скачать обложку</a></div>
 <div class="step"><span>3</span><button class="main" onclick="copyBody(this)">Скопировать весь текст с картинками</button></div>
@@ -82,19 +87,24 @@ def vk_page(f, row):
     e, n = lint_vk(str(f))
     out = SITE / "vk" / row["id"]
     if out.exists(): shutil.rmtree(out)
-    r = subprocess.run([sys.executable, str(KARUSEL), str(Path(f).with_suffix(".json")), str(ROOT / "foto/src"), str(out)], capture_output=True, text=True)
-    if r.returncode: e.append("карусель не собралась: " + (r.stderr or r.stdout)[-200:])
+    if m.get("kartinka"):
+        out.mkdir(parents=True, exist_ok=True)
+        src = ROOT / "gen/vk" / m["kartinka"]
+        if src.exists(): ImageOps.fit(Image.open(src).convert("RGB"), (1080, 1350)).save(out / "01.jpg", quality=86, optimize=True)
+    else:
+        r = subprocess.run([sys.executable, str(KARUSEL), str(Path(f).with_suffix(".json")), str(ROOT / "foto/src"), str(out)], capture_output=True, text=True)
+        if r.returncode: e.append("карусель не собралась: " + (r.stderr or r.stdout)[-200:])
     cards = sorted(out.glob("*.png")) + sorted(out.glob("*.jpg"))
     imgs = "".join(f'<a href="vk/{row["id"]}/{c.name}" download><img src="vk/{row["id"]}/{c.name}" alt="карточка {i}"></a>' for i, c in enumerate(cards, 1))
     post = "\n\n".join(blocks)
     alt = "".join(f"<li>{html.escape(m[k])}</li>" for k in ("zapas1", "zapas2") if m.get(k))
     warn = "" if not e else '<p class="note bad">Проверка: ' + "; ".join(map(html.escape, e)) + "</p>"
     page = head(f"{row['id']} ВК – {blocks[0][:50] if blocks else ''}") + f"""<p><a href="index.html">← Все материалы</a></p>{warn}
-<div class="kit"><div class="meta">{row['id']} · выход {m['date']} · подача: {html.escape(m.get('podacha', ''))} · {n} слов · запрос: {html.escape(row['zapros'])}</div>
+<div class="kit"><div class="meta">{row['id']} · выход {m['date']} · подача: {html.escape(m.get('podacha', ''))} · {n} слов · ключ: {html.escape(row['glavnyy'])}</div>
 <div class="step"><span>1</span><button class="main" onclick="copyText('p',this)">Скопировать текст поста</button></div>
-<div class="step"><span>2</span>Карточки: нажмите на каждую, чтобы скачать, и загрузите в пост по порядку (вид «карусель»).</div>
+<div class="step"><span>2</span>{"Картинка: нажмите, чтобы скачать, и загрузите в пост." if m.get("kartinka") else "Карточки: нажмите на каждую, чтобы скачать, и загрузите в пост по порядку (вид «карусель»)."}</div>
 <details><summary>Запасные первые строки</summary><ul>{alt}</ul></details></div>
-<h2>Текст поста</h2><div class="post" id="p">{html.escape(post)}</div><h2>Карусель: {len(cards)} карточек</h2><div class="cards">{imgs}</div>{JS}</body></html>"""
+<h2>Текст поста</h2><div class="post" id="p">{html.escape(post)}</div><h2>{"Картинка" if m.get("kartinka") else f"Карусель: {len(cards)} карточек"}</h2><div class="cards">{imgs}</div>{JS}</body></html>"""
     (SITE / f"vk-{row['id']}.html").write_text(page, encoding="utf8")
     return m, n, e, len(cards)
 
@@ -116,22 +126,22 @@ def main():
     def tr(row, x):
         if not x: return f"<tr><td>{row['id']}</td><td>{row['data']}</td><td>{html.escape(row['tema'])}</td><td>не написано</td></tr>"
         st = "готово к проверке" if not x[2] else "ошибки проверки"
-        return f"<tr><td>{row['id']}</td><td>{row['data']}</td><td><a href=\"{x[3]}\">{html.escape(x[0])}</a><br><small>{html.escape(row['zapros'])}</small></td><td>{st}</td></tr>"
+        return f"<tr><td>{row['id']}</td><td>{row['data']}</td><td><a href=\"{x[3]}\">{html.escape(x[0])}</a><br><small>{html.escape(row['glavnyy'])}</small></td><td>{st}</td></tr>"
 
     th = "<tr><th>№</th><th>Выход</th><th>Материал и запрос</th><th>Статус</th></tr>"
     done_d = sum(1 for _, x in rows_d if x); done_v = sum(1 for _, x in rows_v if x)
-    idx = head("Автостиль: Дзен и ВК") + f"""<h1>Автостиль, Ярославль: 30 статей Дзена и 15 постов ВК</h1>
-<p class="meta">Студия автозвука «Автостиль», проспект Октября, 82б. Сборка {__import__('datetime').date.today().strftime('%d.%m.%Y')}. Черновики: публикуем только после «да» владельца.</p>
+    idx = head("Звук на Волге: Дзен и ВК") + f"""<h1>«Звук на Волге» (бывш. «Автостиль»), Ярославль: 30 статей Дзена и 20 постов ВК</h1>
+<p class="meta">Студия автозвука «Звук на Волге» (раньше «Автостиль»), проспект Октября, 82б. Сборка {__import__('datetime').date.today().strftime('%d.%m.%Y')}. Черновики: публикуем только после «да» владельца.</p>
 <audio controls src="itog.mp3" preload="none" style="width:100%"></audio>
-<p>Дзен: {done_d} из 30 · ВК: {done_v} из 15 · с ошибками проверки: {bad}</p>
+<p>Дзен: {done_d} из 30 · ВК: {done_v} из 20 · с ошибками проверки: {bad}</p>
 <p><a href="#dzen">Дзен</a> · <a href="#vk">ВК</a> · <a href="kak.html">Как сделано и что проверить</a></p>
 <h2 id="dzen">Дзен – по одной статье в день с 12.11</h2><div class="wrap"><table>{th}{''.join(tr(r, x) for r, x in rows_d)}</table></div>
-<h2 id="vk">ВК – пост через день с 12.11, карусель 6 карточек</h2><div class="wrap"><table>{th}{''.join(tr(r, x) for r, x in rows_v)}</table></div></body></html>"""
+<h2 id="vk">ВК – V01–V15 карусели (без изменений, кроме названия), V16–V20 про сигнализации и отопители с одной картинкой</h2><div class="wrap"><table>{th}{''.join(tr(r, x) for r, x in rows_v)}</table></div></body></html>"""
     (SITE / "index.html").write_text(idx, encoding="utf8")
     kak = ROOT / "docs/kak.html"
     if kak.exists(): shutil.copy(kak, SITE / "kak.html")
     (SITE / "robots.txt").write_text("User-agent: *\nDisallow: /\n")
-    print(f"Дзен {done_d}/30, ВК {done_v}/15, с ошибками {bad}")
+    print(f"Дзен {done_d}/30, ВК {done_v}/20, с ошибками {bad}")
 
 
 if __name__ == "__main__":
