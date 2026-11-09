@@ -89,7 +89,7 @@ def main(files):
     files = files or sorted(map(str, list((ROOT / "dzen").glob("*.md")) + list((ROOT / "vk").glob("*.md"))))
     bad = 0
     for f in files:
-        e, n = (lint_vk if "/vk/" in f else lint_dzen)(f)
+        e, n = (lint_vk if Path(f).resolve().parent.name == "vk" else lint_dzen)(f)
         print(("OK  " if not e else "ОШИБ") + f" {Path(f).name}: {n} слов")
         for x in e: print("     -", x)
         bad += bool(e)
